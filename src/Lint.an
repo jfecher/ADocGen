@@ -1,0 +1,13 @@
+import Std.Vec.Vec, stream_imm_vec
+import ADocGen.Model.Item, Module
+import ADocGen.Diagnostic.Warn, warn
+import Std.Stream.iter
+
+export check_documented
+
+/// Warn about each exported item that has no doc comment
+check_documented (modules: imm Vec Module): Unit can Warn =
+    iter modules fn m ->
+        iter m.items fn item ->
+            if item.doc.length == 0 then
+                warn "${clone m.path}:${item.line}: `${clone item.name}` is undocumented"

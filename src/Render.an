@@ -1,0 +1,107 @@
+// This file handles the layout of the generated site.
+// One page is generated per module plus a single overall index page.
+import Std.Vec.Vec
+import ADocGen.Model.Item, ItemKind, copy_item_kind, Module, Project,
+    Section, Types, Traits, Effects, Functions, Implicits, copy_section
+import ADocGen.Output.Page, page
+import ADocGen.Markdown.front_matter, heading, code_block, doc_text, link, last_segment
+import Std.Vec.extract_vec, stream_imm_vec
+import Std.String.eq_string, to_ascii_lowercase
+import Std.Stream.enumerate, iter, stream_fn, any
+
+export Site, render_site
+
+type Site =
+    // Title of the index page
+    title: String
+    // Base URL that module paths are appended to for source links. Empty to omit the links.
+    source_url: String
+
+render_site (site: ref Site) (project: imm Project): Unit can Page, Print, Fs, Panic =
+    page "_index.md"
+    render_index site project
+
+    // TODO: Type annotation required here, and bad error message from failing to find implicit as a result
+    enumerate project.modules |> iter fn (index, m: imm Module) ->
+        page (page_name m ++ ".md")
+        render_module site (index + 1) m
+
+render_index (site: ref Site) (project: imm Project): Unit can Print, Fs, Panic =
+    front_matter (clone site.title) None true
+    println "Reference documentation for the `${clone project.name}` crate.\n"
+
+    // TODO: Investigate why a type annotation is still required for this simpler case
+    iter project.modules fn (m: imm Module) ->
+        print "- "
+        print <| link (clone m.name) (page_name m ++ "/")
+
+render_module (site: ref Site) (weight: Usz) (m: imm Module): Unit can Print, Fs, Panic =
+    front_matter (clone m.name) (Some weight) false
+    render_import m
+    if site.source_url.length != 0 then
+        println (link "Source" (source_link site m ""))
+        println ""
+
+    render_section site m Types
+    render_section site m Traits
+    render_section site m Effects
+    render_section site m Functions
+    render_section site m Implicits
+
+/// Open each page with the path users import
+render_import (m: ref Module): Unit can Print, Fs, Panic =
+    if m.name == "Std.Prelude" then
+        println "The prelude is imported automatically into every Ante file\n"
+        return ()
+
+    code_block "ante" ("import ${clone m.name}")
+    println ""
+
+/// Render every item in the given section under one heading, or nothing if there are none.
+/// Methods are left out here and rendered beneath their type instead.
+render_section (site: ref Site) (m: imm Module) (section: Section): Unit can Print, Fs, Panic =
+    in_section (item: ref Item) =
+        section.contains item.kind and not m.owns_method item
+
+    if any m.items in_section then
+        separator ()
+        heading 1 (section.title ())
+        separator ()
+        if section.collapsed () then
+            println "<details>"
+            println "<summary>Show ${section.title ()}</summary>\n"
+
+        var first = true
+        iter m.items fn (item: imm Item) ->
+            if in_section item then
+                if not first then separator ()
+                first := false
+                render_item site m 2 item
+                render_methods site m item
+
+        if section.collapsed () then
+            println "</details>\n"
+
+/// Render the methods defined on `owner`, one heading level below it
+render_methods (site: ref Site) (m: imm Module) (owner: ref Item): Unit can Print, Fs, Panic =
+    iter m.items fn (item: imm Item) ->
+        if item.object_type.length != 0 and item.object_type == owner.name then
+            separator ()
+            render_item site m 3 item
+
+separator (): Unit can Print =
+    println "---\n"
+
+render_item (site: ref Site) (m: ref Module) (level: U32) (item: imm Item): Unit can Print, Fs, Panic =
+    heading level (clone item.name)
+    code_block "ante" (clone item.signature)
+    doc_text (clone item.doc)
+    if site.source_url.length != 0 then
+        println (link "source" (source_link site m "#L${item.line}"))
+        println ""
+
+source_link (site: ref Site) (m: ref Module) (anchor: String): String =
+    clone site.source_url ++ "/" ++ clone m.path ++ anchor
+
+page_name (m: ref Module): String can Fs, Panic =
+    to_ascii_lowercase (last_segment (clone m.name))

@@ -1,0 +1,81 @@
+import Std.Vec.Vec, stream_imm_vec
+import Std.String.eq_string
+import Std.Stream.any
+
+export ItemKind, ItemKind.TypeDef, ItemKind.Trait, ItemKind.Effect, ItemKind.Definition, ItemKind.Implicit,
+    ItemKind.Impl, copy_item_kind, Item, Module, Module.owns_method, Project,
+    Section, Section.Types, Section.Traits, Section.Effects, Section.Functions, Section.Implicits,
+    copy_section, Section.title, Section.contains, Section.collapsed
+
+/// An exported top-level item from a source file
+type Item =
+    kind: ItemKind
+    name: String
+    doc: String
+    signature: String
+    line: U32
+    // For methods this is the type they are defined on, or empty otherwise
+    object_type: String
+
+type ItemKind =
+   | TypeDef
+   | Trait
+   | Effect
+   | Definition
+   | Implicit
+   | Impl
+
+impl copy_item_kind: Copy ItemKind with (.*) = deref
+
+/// A source file along with the items it exports
+type Module =
+    // The full module path used to import it, e.g. `Std.Vec`
+    name: String
+    // This module's file path relative to the crate's `src` directory
+    path: String
+    items: Vec Item
+
+/// The crate being documented
+type Project =
+    name: String
+    modules: Vec Module
+
+/// Methods of a type declared in the same module are documented with that type
+Module.owns_method (m: imm Module) (method: ref Item): Bool =
+    method.object_type.length != 0 and any m.items fn item ->
+        item.kind.* is TypeDef and item.name == method.object_type
+
+/// The sections of a module's page, in the order they appear
+type Section =
+   | Types
+   | Traits
+   | Effects
+   | Functions
+   | Implicits
+
+impl copy_section: Copy Section with (.*) = deref
+
+Section.title (section: Section): String =
+    match section
+    | Types -> "Types"
+    | Traits -> "Traits"
+    | Effects -> "Effects"
+    | Functions -> "Functions"
+    | Implicits -> "Implicits"
+
+/// There can be many implicits in a module like the prelude, and they're usually
+/// less important than other exported items so they're hidden by default.
+Section.collapsed (section: Section): Bool =
+    match section
+    | Implicits -> true
+    | _ -> false
+
+Section.contains (section: Section) (kind: ItemKind): Bool =
+    match section, kind
+    | Types, TypeDef -> true
+    | Traits, Trait -> true
+    | Effects, Effect -> true
+    | Functions, Definition -> true
+    | Implicits, Implicit -> true
+    | Implicits, Impl -> true
+    | _ -> false

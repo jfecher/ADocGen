@@ -1,0 +1,97 @@
+import Std.Vec.Vec, extract_vec
+import Std.Stream.stream_fn
+import Std.Env
+import Std.String.eq_string, starts_with
+import Std.Throw.Throw, throw, exit_on_throw
+import ADocGen.Compiler.current_project, with_project
+import ADocGen.Diagnostic.DocError, Usage, NoSourceFiles, report_warnings, display_doc_error
+import ADocGen.Lint.check_documented
+import ADocGen.Output.into_directory, preview
+import ADocGen.Render.Site, render_site
+import Std.Fail.try
+
+usage = "usage: ADocGen [options] <project-directory> <output-directory>
+
+Generates markdown documentation for the Ante project in <project-directory>, the
+directory containing its `src` directory, writing one page per module to <output-directory>.
+
+options:
+  --stdout            print every page instead of writing files
+  --strict            fail if any exported item is undocumented
+  --title <text>      title of the index page (defaults to the crate's name)
+  --source-url <url>  base URL of the `src` directory, used to link each item to its source"
+
+type Options =
+    project_directory: String
+    // Empty when previewing
+    output_directory: String
+    preview: Bool
+    strict: Bool
+    // Empty to use the crate's name
+    title: String
+    // Empty to omit source links
+    source_url: String
+
+parse_options (args: imm Vec String): Options can Throw DocError, Panic =
+    var positional = Vec.empty ()
+    var preview, strict = false, false
+    var title, source_url = "", ""
+
+    // Skip the program name
+    var i = 1
+    while i < args.len do
+        // TODO: extract_vec requires ref, making this more painful than it should be
+        arg = clone (ref deref args).[i]
+
+        if arg == "--stdout" then preview := true
+        else if arg == "--strict" then strict := true
+        else if arg == "--title" then
+            title := option_value args i
+            i += 1
+        else if arg == "--source-url" then
+            source_url := option_value args i
+            i += 1
+        else if not starts_with arg "-" then positional.push arg
+        else throw (Usage usage)
+        i += 1
+
+    expected_positional = if preview then 1 else 2
+    if positional.len != expected_positional then throw (Usage usage)
+
+    paths = ref positional
+    project_directory = clone paths.[0]
+    output_directory = if preview then "" else clone paths.[1]
+    Options project_directory output_directory preview strict title source_url
+
+/// The argument following the option at `index`
+option_value (args: imm Vec String) (index: Usz): String can Throw DocError =
+    // TODO: Should matching capture fails by default? Or some terse inline handler syntax?
+    if (try do args.get (index + 1)) is Some elem
+    then clone elem
+    else throw (Usage usage)
+
+main () =
+    print_to_stdout do
+    abort_on_panic do
+    exit_on_throw do
+
+    args = Vec.of Env.args
+    options = parse_options args
+
+    project = with_project (clone options.project_directory) current_project
+    project = imm project
+
+    if project.modules.is_empty () then
+        throw (NoSourceFiles options.project_directory)
+
+    // TODO: Avoid issuing warnings on trait impls
+    report_warnings options.strict do
+        check_documented project.modules
+
+    title = if options.title.length == 0 then clone project.name else options.title
+    site = Site title options.source_url
+
+    if options.preview then
+        render_site site project ~> preview
+    else
+        render_site site project ~> into_directory options.output_directory _

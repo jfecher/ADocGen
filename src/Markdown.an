@@ -1,0 +1,51 @@
+import Std.String.split, string_of, chars, starts_with, trim, eq_string
+import Std.Stream.Emit, emit, map, stream, stream_fn, iter, last
+import Std.Char.to_ascii_lower
+
+export front_matter, heading, code_block, doc_text, link, last_segment
+
+/// `weight` orders pages within a section
+front_matter (title: String) (weight: Maybe Usz) (section_index: Bool): Unit can Print =
+    println "+++"
+    println "title = \"${title}\""
+    println "categories = [\"docs\"]"
+    if weight is Some weight then
+        println "weight = ${weight}"
+    if section_index then
+        println "layout = \"single\""
+    println "+++"
+    println ""
+
+heading (level: U32) (text: String): Unit can Print =
+    repeat (Usz level) do print "#"
+    println " ${text}"
+    println ""
+
+code_block (language: String) (code: String): Unit can Print =
+    println "```${language}"
+    println code
+    println "```"
+    println ""
+
+link (text: String) (url: String): String =
+    "[${text}](${url})"
+
+/// Print a doc comment as markdown. Any code blocks are assumed to be ante source code.
+doc_text (doc: String): Unit can Print, Fs =
+    if doc.length == 0 then return ()
+
+    var in_code = false
+    split doc '\n' |> iter fn line ->
+        trimmed = trim (clone line)
+        is_fence = starts_with trimmed "```"
+        if is_fence and not in_code and trimmed == "```"
+        then println (line ++ "ante")
+        else println line
+
+        if is_fence then in_code := not in_code
+
+    println ""
+
+/// The final `.`-separated component of a path such as `Std.Vec`
+last_segment (path: String): String can Fs =
+    split path '.' |> last |> Maybe.unwrap_or_else do ""

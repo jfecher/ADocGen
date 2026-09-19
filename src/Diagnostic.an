@@ -1,0 +1,40 @@
+import Std.Throw.Throw, throw
+
+export Warn, warn, DocError, DocError.Usage, DocError.CannotOpenFile,
+    DocError.WarningsAsErrors, DocError.NoSourceFiles, DocError.CannotLoadProject, display_doc_error,
+    report_warnings
+
+/// A problem in the documented source that does not stop generation
+effect Warn =
+    warn: fn String -> Unit
+
+/// Any error that halts generation
+type DocError =
+   | Usage String
+   | CannotOpenFile String
+   | WarningsAsErrors U32
+   | NoSourceFiles String
+   | CannotLoadProject String
+
+impl display_doc_error: Display DocError pure with
+    print error =
+        match deref error
+        | Usage message -> print message
+        | CannotOpenFile path -> print "cannot open `${path}` for writing"
+        | WarningsAsErrors count -> print "${count} warning(s) with --strict"
+        | NoSourceFiles root -> print "no Ante source files found in `${root}/src`"
+        | CannotLoadProject root -> print "cannot load the project in `${root}`"
+
+/// Print each warning to stderr as it happens. When `strict` is set, having with any
+/// warnings will throw a DocError.
+report_warnings (strict: Bool) (f: a can Warn, e): a can Fs, Throw DocError, e =
+    var count: U32 = 0
+    result = handler h for warn message ->
+        print_to_stderr do println "warning: ${message}"
+        count += 1
+        resume ()
+    in f ()
+
+    if strict and count > 0 then
+        throw (DocError.WarningsAsErrors count)
+    result

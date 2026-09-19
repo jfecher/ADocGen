@@ -1,0 +1,81 @@
+// This file contains all the bindings to ante's C API.
+// It is meant to be self contained so no other file touches raw pointers.
+// The Compiler effect is instead used as a wrapper.
+import Std.C
+import Std.C.malloc, memcpy, strlen, copy_cstring
+import Std.Throw.Throw, throw
+import Std.Vec.Vec
+import ADocGen.Model.Item, ItemKind, Module, Project
+import ADocGen.Diagnostic.DocError, CannotLoadProject
+import Std.String.from_c_string
+
+export Compiler, current_project, with_project
+
+/// Read access to the compiler's view of the project being documented
+effect Compiler =
+    current_project: fn Unit -> Project
+
+type Session = handle: Ptr Unit
+
+impl copy_session: Copy Session with (.*) = deref
+
+session_new = extern "ante_session_new": fn C.String -> Session can Fs
+session_free = extern "ante_session_free": fn Session -> Unit can Fs
+crate_name = extern "ante_crate_name": fn Session -> C.String
+module_count = extern "ante_module_count": fn Session -> Usz
+module_name = extern "ante_module_name": fn Session Usz -> C.String
+module_path = extern "ante_module_path": fn Session Usz -> C.String
+item_count = extern "ante_item_count": fn Session Usz -> Usz
+item_kind = extern "ante_item_kind": fn Session Usz Usz -> U32
+item_name = extern "ante_item_name": fn Session Usz Usz -> C.String
+item_doc = extern "ante_item_doc": fn Session Usz Usz -> C.String
+item_signature = extern "ante_item_signature": fn Session Usz Usz -> C.String
+item_line = extern "ante_item_line": fn Session Usz Usz -> U32
+
+item_exported = extern "ante_item_exported": fn Session Usz Usz -> Bool
+item_object_type = extern "ante_item_object_type": fn Session Usz Usz -> C.String
+
+/// Answer `Compiler` queries about the Ante project in a project's `root` directory
+with_project (root: String) (f: a can Compiler, e): a can Fs, Panic, Throw DocError, e =
+    session = session_new (C.String (root ++ "\0").data)
+    if session.handle == null () then throw (CannotLoadProject root)
+    handler h for current_project () -> resume (Project (from_c_string (crate_name session)) (load_modules session))
+    result = f ()
+    session_free session
+    result
+
+/// Load every module exporting anything. Items that are not exported are left out entirely.
+load_modules (session: Session): Vec Module can Fs, Panic =
+    var modules = Vec.empty ()
+    for m in 0 .. module_count session do
+        loaded = load_module session m
+        if not loaded.items.is_empty () then modules.push loaded
+    modules
+
+load_module (session: Session) (m: Usz): Module can Fs, Panic =
+    var items = Vec.empty ()
+    for i in 0 .. item_count session m do
+        // Compile-time items have nothing to document
+        if item_exported session m i and item_kind session m i != comptime then
+            items.push (load_item session m i)
+    Module (from_c_string (module_name session m)) (from_c_string (module_path session m)) items
+
+load_item (session: Session) (m: Usz) (i: Usz): Item can Fs =
+    kind = kind_of (item_kind session m i)
+    name = from_c_string (item_name session m i)
+    doc = from_c_string (item_doc session m i)
+    signature = from_c_string (item_signature session m i)
+    method_of = from_c_string (item_object_type session m i)
+    Item kind name doc signature (item_line session m i) method_of
+
+comptime: U32 = 5
+
+kind_of (tag: U32): ItemKind =
+    match tag
+    | 1 -> TypeDef
+    | 2 -> Trait
+    | 3 -> Effect
+    | 4 -> Impl
+    | 5 -> Definition  // should actually be Comptime, but we ignore those
+    | 6 -> Implicit
+    | _ -> Definition

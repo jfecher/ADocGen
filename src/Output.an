@@ -1,0 +1,55 @@
+import Std.C
+import Std.C.fopen, fclose, fwrite, File, copy_file, copy_cstring
+import Std.Throw.Throw, throw
+import Std.String.split
+import Std.Stream.Emit, emit, stream, stream_fn, foldl
+import ADocGen.Diagnostic.DocError, CannotOpenFile
+import Std.IO.create_dir_all
+import Std.Fail.ignore_fail
+
+export Page, page, into_directory, preview
+
+/// Output is divided into pages, each written to its own file.
+/// `page` starts a new page with the given file name on each call. Each print after it
+/// gets added to the content of that page.
+effect Page =
+    page: fn String -> Unit
+
+write_stderr = extern "ante_write_stderr": fn (Ptr Char) Usz -> Unit can Fs
+mkdir = extern "mkdir": fn C.String U32 -> I32 can Fs
+
+/// Write each page to its own file in `directory`, creating the directory if needed
+into_directory (directory: String) (f: a can Page, Print, e): a can Fs, Throw DocError, e =
+    create_dir_all (clone directory) ~> ignore_fail
+
+    var current = Maybe.None
+    handler _ for page name ->
+        close current
+        current := Some (open_for_writing (clone directory ++ "/" ++ name))
+        resume ()
+
+    result = print_to_sink (write_to current _ _) f
+    close current
+    result
+
+// TODO: Move file write utils into ante's stdlib
+write_to (file: ref Maybe File) (data: Ptr Char) (len: Usz): Unit can Fs =
+    if file.* is Some file then
+        fwrite (transmute data) 1 len file
+
+// Temporary while Drop calls aren't inserted by the compiler
+close (file: Maybe File): Unit can Fs =
+    if file is Some file then
+        fclose file
+
+open_for_writing (path: String): File can Fs, Throw DocError =
+    file = fopen (C.String.new (clone path)) (C.String.new "w")
+    if file.f == null () then throw (CannotOpenFile path)
+    file
+
+/// Print every page to stdout, each preceded by a header naming its file
+preview (f: a can Page, e): a can Print, e =
+    handler h for page name ->
+        println "\n=== ${name} ==="
+        resume ()
+    f ()

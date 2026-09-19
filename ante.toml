@@ -1,0 +1,7 @@
+name = "ADocGen"
+
+# libante_capi is built by `cargo build -p ante-capi --release` in the compiler repo.
+# The remaining libraries are required on linux
+# TODO: Remove these extra deps & make this platform agnostic.
+link-lib = ["ante_capi", "gcc_s", "util", "rt", "pthread", "m", "dl", "c"]
+link-search = ["../ante/target/release"]
