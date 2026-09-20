@@ -15,9 +15,6 @@ export Page, page, into_directory, preview
 effect Page =
     page: fn String -> Unit
 
-write_stderr = extern "ante_write_stderr": fn (Ptr Char) Usz -> Unit can Fs
-mkdir = extern "mkdir": fn C.String U32 -> I32 can Fs
-
 /// Write each page to its own file in `directory`, creating the directory if needed
 into_directory (directory: String) (f: a can Page, Print, e): a can Fs, Throw DocError, e =
     create_dir_all (clone directory) ~> ignore_fail
